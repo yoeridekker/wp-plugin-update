@@ -9,6 +9,8 @@
   Version: 1.0.0
 */
 
+// latets from GIT!
+
 // define global variables
 define("SORBI_PLUGIN_FILE", __FILE__);
 define("SORBI_PATH",plugin_dir_path(__FILE__) );
