@@ -19,8 +19,7 @@ class SorbiPluginUpdater {
         $this->username = $gitHubUsername;
         $this->repo = $gitHubProjectName;
         $this->accessToken = $accessToken;
-		
-		$this->setTransitent('123');
+
     }
  
     // Get information regarding our plugin from WordPress
@@ -61,21 +60,22 @@ class SorbiPluginUpdater {
  
     // Push in plugin version information to get the update notification
     public function setTransitent( $transient ) {
+		
         // If we have checked the plugin data before, don't re-check
-		/*
 		if ( empty( $transient->checked ) ) {
 			return $transient;
 		}
-		*/
+		
 		// Get plugin & GitHub release information
 		$this->initPluginData();
 		$this->getRepoReleaseInfo();
 		
 		// Check the versions if we need to do an update
-		$doUpdate = version_compare( $this->githubAPIResult->tag_name, $transient->checked[$this->slug] );
+		//$doUpdate = version_compare( $this->githubAPIResult->tag_name, $transient->checked[$this->slug] );
+		$doUpdate = version_compare( $this->githubAPIResult->tag_name, $this->pluginData['Version'] );
 
 		// Update the transient to include our updated plugin data
-		if ( $doUpdate == 1 ) {
+		if ( $doUpdate === 1 ) {
 			$package = $this->githubAPIResult->zipball_url;
 		 
 			// Include the access token for private GitHub repos
@@ -90,7 +90,7 @@ class SorbiPluginUpdater {
 			$obj->package = $package;
 			$transient->response[$this->slug] = $obj;
 		}
-		 
+
 		return $transient;
     }
  

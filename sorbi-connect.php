@@ -20,15 +20,30 @@ require_once( SORBI_PATH . 'lib/sorbi.class.php' );
 require_once( SORBI_PATH . 'lib/update.class.php' );
 
 // run the updater 
+if( is_admin() ){
+	$updater = new SorbiPluginUpdater( SORBI_PLUGIN_FILE, 'yoeridekker', 'wp-plugin-update' );
+}
+/*
+add_filter ('pre_set_site_transient_update_plugins', 'display_transient_update_plugins');
+function display_transient_update_plugins ($transient)
+{
+	echo '<pre>';
+    var_dump($transient);
+	die;
+}
+*/
+/*
 add_action('admin_init', 'sorbi_updater');
 function sorbi_updater() {
+	wp_update_plugins();
 	$updater = new SorbiPluginUpdater( SORBI_PLUGIN_FILE, 'yoeridekker', 'wp-plugin-update' );
-	/*
+
 	echo '<pre>';
-	var_dump( $updater);
+	var_dump( $updater );
 	die;
-	*/
+
 }
+*/
 
 // init the SorbiConnect class
 $sorbi = new SorbiConnect();
