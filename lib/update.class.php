@@ -7,7 +7,7 @@ class SorbiPluginUpdater {
     private $username; // GitHub username
     private $repo; // GitHub repo name
     private $pluginFile; // __FILE__ of our plugin
-    private $githubAPIResult; // holds data from GitHub
+    public $githubAPIResult; // holds data from GitHub
     private $accessToken; // GitHub private repo token
  
     function __construct( $pluginFile, $gitHubUsername, $gitHubProjectName, $accessToken = '' ) {
@@ -19,6 +19,8 @@ class SorbiPluginUpdater {
         $this->username = $gitHubUsername;
         $this->repo = $gitHubProjectName;
         $this->accessToken = $accessToken;
+		
+		$this->setTransitent('123');
     }
  
     // Get information regarding our plugin from WordPress
@@ -46,6 +48,7 @@ class SorbiPluginUpdater {
 		 
 		// Get the results
 		$this->githubAPIResult = wp_remote_retrieve_body( wp_remote_get( $url ) );
+		
 		if ( ! empty( $this->githubAPIResult ) ) {
 			$this->githubAPIResult = @json_decode( $this->githubAPIResult );
 		}
@@ -59,10 +62,11 @@ class SorbiPluginUpdater {
     // Push in plugin version information to get the update notification
     public function setTransitent( $transient ) {
         // If we have checked the plugin data before, don't re-check
+		/*
 		if ( empty( $transient->checked ) ) {
 			return $transient;
 		}
-		
+		*/
 		// Get plugin & GitHub release information
 		$this->initPluginData();
 		$this->getRepoReleaseInfo();
