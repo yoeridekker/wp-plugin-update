@@ -13,12 +13,21 @@ class SorbiConnect{
 	protected $version							= 'v1';
 	protected $api_uri							= 'http://api.sorbi.com/%s/%s';
 	protected $timeout							= 30;
+	protected $sync_rewrite						= 'sorbiconnect_sync.php';
+	protected $sync_rewrite_var					= 'sorbi_sync';
+	
+	// system
+	protected $os								= null;
+	protected $machine							= null;
+	protected $php								= 0;
+	protected $extensions						= array();
 	
 	// protected variables
 	protected $platform 						= 'wordpress';
 	protected $pagename 						= 'sorbi-connect';
 	
 	// options names
+	protected $sorbi_files_option_name			= 'sorbi_filechanges';
 	protected $sorbi_message_option_name		= 'sorbi_messages';
 	protected $sorbi_notices_option_name		= 'sorbi_notices';
 	protected $sorbi_options_group				= 'sorbi_options';
@@ -26,8 +35,34 @@ class SorbiConnect{
 	protected $site_key_option_name 			= 'sorbi_site_key';
 	protected $site_key_expiration_option_name 	= 'sorbi_site_key_expiration';
 	
+	// debug 
+	public $debug								= true;
+	public $start								= 0;
+	public $end									= 0;
+	public $total								= 0;
+	public $timer								= array();
+	
+	static $bye									= 'frfrrfr';
+	
+	// start the class
 	public function __construct(){
 		
+		// start listener
+		$this->start = microtime( true );
+		
+		// debug
+		self::debug();
+			
+		// get os, machine, php version and loaded extensions
+		$this->os 				= php_uname('s');
+		$this->machine 			= php_uname('m');
+		$this->php 				= self::get_php_version();
+		$this->extensions		= self::get_php_extensions();
+		
+		// system vars 
+		$this->allow_url_fopen		= (int) ini_get('allow_url_fopen') === 1 ? true : false ;
+		$this->max_execution_time	= (int) ini_get('max_execution_time'); 
+
 		// overwrite date format 
 		$this->dateformat = get_option('date_format', 'Y-m-d');
 		
@@ -54,6 +89,9 @@ class SorbiConnect{
 		
 		// add the wp admin init listener 
 		add_action( 'init', array( $this, 'init' ) );
+		
+		// add style for debug 
+		if( $this->debug ) add_action('admin_head', array( $this, 'admin_style' ) );
 		
 		// add the wp admin init listener 
 		add_action( 'admin_init', array( $this, 'admin_init' ) );
@@ -84,22 +122,241 @@ class SorbiConnect{
 		
 		// listener for theme switch
 		add_action( 'after_switch_theme', array( $this, 'after_update' ), 10 );
+		
+		// add rewrite
+		add_filter( 'query_vars', array( $this, 'sorbi_sync_rewrite_add_var' ) );
+		
+		// catch the rewrite
+		add_action( 'template_redirect', array( $this, 'sorbi_sync_rewrite_catch_sync' ) );
+		
+		// prevent redirection
+		add_action( 'redirect_canonical', array( $this, 'sorbi_sync_cancel_redirect_canonical' ) );
+		
+		
 	}
 	
-	public function scan_dir( $dirname ){
-		if( !in_array( $dirname, $this->dirs ) ){
-			$this->dirs[] = $dirname;
+	// backup all tables in db
+	public function mysql_backup(){
+		
+		$date 			= date("Y-m-d");
+		$filename		= "{$this->site_key}-{$date}-backup.sql";
+		$backup_file 	= "{$this->uploaddir['basedir']}/{$filename}";
+		$backup_url 	= "{$this->uploaddir['baseurl']}/{$filename}";
+		
+		// check if we have a backup for today
+		if ( file_exists( $backup_file ) && is_readable( $backup_file ) ) {
+			return $backup_url;
 		}
+
+		//connect to db
+		$link = mysqli_connect( DB_HOST, DB_USER, DB_PASSWORD );
+		mysqli_set_charset( $link, 'utf8');
+		mysqli_select_db( $link, DB_NAME);
+
+		// get all of the tables
+		$tables = array();
+		$result = mysqli_query( $link, 'SHOW TABLES' );
+		while($row = mysqli_fetch_row($result) ){
+			$tables[] = $row[0];
+		}
+
+		// disable foreign keys (to avoid errors)
+		$sql = 'SET FOREIGN_KEY_CHECKS=0;' . PHP_EOL;
+		$sql.= 'SET SQL_MODE="NO_AUTO_VALUE_ON_ZERO";' . PHP_EOL;
+		$sql.= 'SET AUTOCOMMIT=0;' . PHP_EOL;
+		$sql.= 'START TRANSACTION;' . PHP_EOL;
+
+		// cycle through
+		foreach($tables as $table){
+			
+			$result 	= mysqli_query($link, 'SELECT * FROM ' . $table );
+			$num_fields = (int) mysqli_num_fields( $result );
+			$num_rows 	= (int) mysqli_num_rows( $result );
+			$i_row 		= 0;
+
+			//$sql.= 'DROP TABLE '.$table.';'; 
+			$row2 = mysqli_fetch_row(mysqli_query($link, 'SHOW CREATE TABLE '.$table ) );
+			$sql.= PHP_EOL . PHP_EOL . $row2[1] . PHP_EOL; 
+
+			if ( $num_rows !== 0 ) {
+				$row3 = mysqli_fetch_fields( $result );
+				$sql.= 'INSERT INTO '.$table.'( ';
+				foreach ($row3 as $th) { 
+					$sql.= '`'.$th->name.'`, '; 
+				}
+				$sql = substr($sql, 0, -2);
+				$sql.= ' ) VALUES';
+
+				for ($i = 0; $i < $num_fields; $i++) {
+					while($row = mysqli_fetch_row($result)){
+						$sql.= PHP_EOL . "(";
+						for($j=0; $j<$num_fields; $j++) 
+						{
+							$row[$j] = addslashes($row[$j]);
+							$row[$j] = preg_replace("#\n#","\\n",$row[$j]);
+							if (isset($row[$j])) { $sql.= '"'.$row[$j].'"' ; } else { $sql.= '""'; }
+							if ($j<($num_fields-1)) { $sql.= ','; }
+						}
+						if ( $num_rows === $i_row++ ) {
+							$sql.= ");"; // last row
+						} else {
+							$sql.= "),"; // not last row
+						}   
+					}
+				}
+			}
+			$sql.= PHP_EOL;
+		}
+
+		// enable foreign keys
+		$sql.= 'SET FOREIGN_KEY_CHECKS=1;' . PHP_EOL;
+		$sql.= 'COMMIT;';
+		
+		//save file
+		$handle = fopen( $backup_file, 'w+');
+		fwrite( $handle, $sql );
+		fclose($handle);
+		
+		return $backup_url;
+	}
+
+	/* creates a compressed zip file */
+	public function create_zip( $files = array(), $destination = '', $overwrite = false ) {
+		//if the zip file already exists and overwrite is false, return false
+		if( file_exists($destination) && !$overwrite) {
+			return false;
+		}
+		//vars
+		$valid_files = array();
+		//if files were passed in...
+		if( is_array($files) ) {
+			//cycle through each file
+			foreach($files as $file) {
+				//make sure the file exists
+				if( file_exists($file) ) $valid_files[] = $file;
+			}
+		}
+		
+		//if we have good files...
+		if(count($valid_files)) {
+			//create the archive
+			$zip = new ZipArchive();
+			if( $zip->open($destination, $overwrite ? ZIPARCHIVE::OVERWRITE : ZIPARCHIVE::CREATE ) !== true ) {
+				return false;
+			}
+			//add the files
+			foreach($valid_files as $file) {
+				$zip->addFile($file,$file);
+			}
+			//debug
+			//echo 'The zip archive contains ',$zip->numFiles,' files with a status of ',$zip->status;
+			
+			//close the zip -- done!
+			$zip->close();
+			
+			//check to make sure the file exists
+			return file_exists($destination);
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	public function admin_style(){
+		wp_enqueue_style( 'sorbi-adfmin-styles', SORBI_URL . 'assets/css/sorbi.css' , array(), false, false);
+	}
+	
+	public function sorbi_sync_cancel_redirect_canonical( $redirect_url ){
+		if ( get_query_var( $this->sync_rewrite_var ) ) return false;
+	}
+	
+	public function sorbi_sync_rewrite_catch_sync(){
+		if( get_query_var( $this->sync_rewrite_var ) ){
+			
+			$this->check_site_key = isset($_REQUEST['site_key']) && !empty($_REQUEST['site_key']) ? $_REQUEST['site_key'] : false ; 
+			
+			if( get_query_var( $this->sync_rewrite_var ) === $this->check_site_key ){
+				
+				// create the mysql backup
+				$sql_backup 	= self::mysql_backup();
+				
+				// scan all dirs
+				self::scan();
+				$scan 			= self::check_file_changes();
+				
+				// push the versions
+				$versions 		= self::after_update();
+
+				// return result
+				$result = array(
+					//'files'		=> $this->files,
+					'scan' 		=> $scan,
+					'versions' 	=> $versions,
+					'backup'	=> $sql_backup
+				);
+				
+				// output the data
+				header("Content-Type: application/json; charset=UTF-8");
+				echo json_encode( $result );
+				die;
+			}
+			
+			// report 401 if site key does not match
+			header('HTTP/1.0 401 Unauthorized');
+			echo 'Invalid site key.';
+			die;
+		}
+		
+	}
+		
+	public function sorbi_sync_rewrite_add_var( $vars ){
+		$vars[] = $this->sync_rewrite_var;
+		return $vars;
+	}
+
+	private function get_php_extensions(){
+		// debug
+		self::debug();
+		
+		$extensions = array();
+		foreach ( get_loaded_extensions() as $ext) { 
+			$extensions[ $ext ] = strtolower( trim( $ext ) ); 
+		}
+		return $extensions;
+	}
+	
+	private function get_php_version(){
+		// debug
+		self::debug();
+		
+		if ( !defined('PHP_VERSION_ID') ) {
+			$version = explode('.', PHP_VERSION );
+			return ($version[0] * 10000 + $version[1] * 100 + $version[2] );
+		}
+		return PHP_VERSION_ID;
+	}
+	
+	/**
+	 * Recursive scan of all directories
+	 *
+	 * @return void
+	 **/
+	public function scan_dir( $dirname ){
+		// debug
+		self::debug();
+		
+		if( !in_array( $dirname, $this->dirs ) ) $this->dirs[] = $dirname;
 		$path = $dirname . '*';
 		foreach( glob( $path, GLOB_ONLYDIR ) as $dir ) {
-			
-			if( !in_array( $dir, $this->dirs ) ){
-				self::scan_dir( $dir . DIRECTORY_SEPARATOR );
-			}
+			if( !in_array( $dir, $this->dirs ) ) self::scan_dir( $dir . DIRECTORY_SEPARATOR );
 		}
 	}
 	
 	public function scan_files( $dir ){
+		// debug
+		self::debug();
+		
 		$path 		= $dir . '*';
 		$dirname = str_replace( ABSPATH, '', $dir );
 		foreach( glob( $path ) as $filepath ) {
@@ -113,14 +370,16 @@ class SorbiConnect{
 	}
 	
 	public function scan(){
+		// debug
+		self::debug();
 		
+		// first try json based file change history
 		$this->files 	= false;
-		$files			= 'sorbi_filechanges';
-		$filename		= "{$files}.json";
+		$filename		= "{$this->sorbi_files_option_name}.json";
 		$filepath 		= "{$this->uploaddir['basedir']}/{$filename}";
 		
 		// try to get json saved values
-		if( is_file( $filepath ) && is_readable( $filepath ) ){
+		if( $this->allow_url_fopen && is_file( $filepath ) && is_readable( $filepath ) ){
 			
 			// try to get the file content
 			$json = file_get_contents( $filepath );
@@ -140,12 +399,12 @@ class SorbiConnect{
 		
 		// we dont have the json, try the option 
 		if( !$this->files ){
-			$this->files = get_option( $files, array() );
+			$this->files = get_option( $this->sorbi_files_option_name , array() );
 		}
 
 		// set the empty dirs
 		$this->dirs = array();
-		
+		/*
 		// map the dirs
 		$dirs = array(
 			ABSPATH . 'wp-admin' . DIRECTORY_SEPARATOR ,
@@ -155,14 +414,15 @@ class SorbiConnect{
 		
 		foreach( $dirs as $dir ){
 			self::scan_dir( $dir );
-		}
+		}*/
+		
+		self::scan_dir( ABSPATH );
 		
 		// now we scan the files in every dir 
 		foreach( $this->dirs as $dir ){
 			self::scan_files( $dir );
 		}
 
-		//var_dump( $this->files, $this->dirs );
 		// try to write the json file
 		$jsonfile = file_put_contents( $filepath, json_encode( $this->files ), LOCK_EX );
 		
@@ -174,6 +434,8 @@ class SorbiConnect{
 	}
 	
 	public function check_file_changes(){
+		// debug
+		self::debug();
 		
 		$now			= time();
 		$changes		= array();
@@ -203,8 +465,18 @@ class SorbiConnect{
 	 * @return void
 	 **/
 	public function init(){
+		// debug
+		self::debug();
+		
 		// check if the plugin is called from the /wp-admin/ site
 		$this->is_admin = is_admin();
+		
+		add_rewrite_rule(
+			"^{$this->sync_rewrite}?$",
+			"index.php?{$this->sync_rewrite_var}={$this->site_key}",
+			'top'
+		);
+		flush_rewrite_rules();
 	}
 	
 	/**
@@ -215,6 +487,9 @@ class SorbiConnect{
 	 **/
 	public function after_update(){
 		
+		// debug
+		self::debug();
+		
 		// try to get all the versions
 		$versions = self::list_versions();
 		
@@ -222,6 +497,9 @@ class SorbiConnect{
 		if( $versions ){
 			self::update_versions( $versions );
 		}
+		
+		return $versions;
+		
 	}
 	
 	/**
@@ -262,6 +540,9 @@ class SorbiConnect{
 	 **/
 	public function sorbi_notify() {
 		
+		// debug
+		self::debug();
+		
 		// print messages, persistant
 		if( count( $this->messages ) > 0 ){
 			foreach( $this->messages as $class => $messages ){
@@ -295,6 +576,9 @@ class SorbiConnect{
 	 * @return void
 	 **/
 	public function validate_site_key( $site_key, $manual = true ){
+		
+		// debug
+		self::debug();
 		
 		// only execute on wp-admin
 		if( !$this->is_admin ) return;
@@ -404,6 +688,9 @@ class SorbiConnect{
 	 * @return void
 	 **/
 	public function admin_init(){
+
+		// debug
+		self::debug();
 		
 		// if we have no key
 		if( !$this->site_key || (string) $this->site_key === '' ){
@@ -468,6 +755,8 @@ class SorbiConnect{
 	 * @return void
 	 */
 	public function menu_page(){
+		// debug
+		self::debug();
 		
 		// add the menu page
 		add_menu_page(
@@ -487,6 +776,8 @@ class SorbiConnect{
 	 * @return array $versions
 	 */
 	public function list_versions(){
+		// debug
+		self::debug();
 		
 		// set the args array
 		$args = array();
@@ -533,6 +824,8 @@ class SorbiConnect{
 	}
 	
 	private function update_versions( $versions ){
+		// debug
+		self::debug();
 		
 		// set args
 		$args['site_key'] 	= $this->site_key;
@@ -565,18 +858,7 @@ class SorbiConnect{
                 submit_button( __('Validate SORBI site key', SORBI_TD ) );
             ?>
             </form>
-			
-			
         </div>
-		<pre>
-        <?php
-		
-		self::scan();
-		$scan = self::check_file_changes();
-		var_dump( $scan );
-		
-		?>
-		</pre>
 		<?php
 	}
 	
@@ -586,6 +868,8 @@ class SorbiConnect{
      * @param array $input Contains all settings fields as array keys
      */
 	public function sorbi_api_call( $action = '' , $args = array(), $method = 'POST', $silent = false ){
+		// debug
+		self::debug();
 		
 		// construct the call
 		$call = array(
@@ -626,6 +910,39 @@ class SorbiConnect{
 		
 		// return as object
 		return (object) $json;
+	}
+	
+	// debug function
+	private function debug(){
+		// for debugging purposes
+		$backtrace = debug_backtrace(); 
+		if( $this->debug ) {
+			$debug = array(
+				'time'		=> microtime( true ),
+				'backtrace' => "{$backtrace[1]['class']}:{$backtrace[1]['function']}"
+			);
+			$this->timer[] = (object) $debug;
+		}
+	}
+	
+	private function googbye(){
+		
+		// calculated times 
+		foreach( $this->timer as $time ){
+			if( $time->time > $this->end ) $this->end = $time->time;
+		}
+		
+		// calculate total time 
+		$this->total = (float) ( $this->end - $this->start );
+		
+		// show the debug
+		$debug = var_export( $this, true);
+		$highlighted = highlight_string("<?php \n" . $debug . ";\n?>", true );
+		printf( '<div id="sorbi_debug">%s</div>', $highlighted );
+	}
+	
+	public function __destruct() {
+		if( $this->debug && $this->is_admin ) self::googbye();
 	}
 	
 }
