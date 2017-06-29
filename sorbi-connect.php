@@ -6,7 +6,7 @@ Description: Connect your website to the SORBI network
 Author: Yoeri Dekker
 Author URI: http://www.csorbamedia.com/
 Text Domain: sorbi-connect
-Version: 1.0.3
+Version: 1.0.4
 */
 
 // define global variables
@@ -21,7 +21,7 @@ require_once( SORBI_PATH . 'lib/update.class.php' );
 
 // run the GIT updater 
 if( is_admin() ){
-	$updater = new SorbiPluginUpdater( SORBI_PLUGIN_FILE, 'yoeridekker', 'wp-plugin-update' );
+    $updater = new SorbiPluginUpdater( SORBI_PLUGIN_FILE, 'yoeridekker', 'wp-plugin-update' );
 }
 
 // init the SorbiConnect class
