@@ -6,7 +6,7 @@ Description: Connect your website to the SORBI network
 Author: Yoeri Dekker
 Author URI: http://www.csorbamedia.com/
 Text Domain: sorbi-connect
-Version: 1.0.6
+Version: 1.0.7
 */
 
 // define global variables
