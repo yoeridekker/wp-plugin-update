@@ -60,7 +60,7 @@ class SorbiPluginUpdater {
  
     // Push in plugin version information to get the update notification
     public function setTransitent( $transient ) {
-		
+
         // If we have checked the plugin data before, don't re-check
 		if ( empty( $transient->checked ) ) {
 			return $transient;
@@ -84,10 +84,11 @@ class SorbiPluginUpdater {
 			}
 		 
 			$obj = new stdClass();
-			$obj->slug = $this->slug;
-			$obj->new_version = $this->githubAPIResult->tag_name;
-			$obj->url = $this->pluginData["PluginURI"];
-			$obj->package = $package;
+			$obj->slug 			= $this->slug;
+			$obj->plugin 		= $this->slug;
+			$obj->new_version 	= $this->githubAPIResult->tag_name;
+			$obj->url 			= $this->pluginData["PluginURI"];
+			$obj->package 		= $package;
 			$transient->response[$this->slug] = $obj;
 		}
 
@@ -108,11 +109,13 @@ class SorbiPluginUpdater {
 		
 		// Add our plugin information
 		$response->last_updated = $this->githubAPIResult->published_at;
-		$response->slug = $this->slug;
+		$response->slug 		= $this->slug;
+		$response->plugin 		= $this->slug;
 		$response->plugin_name  = $this->pluginData["Name"];
-		$response->version = $this->githubAPIResult->tag_name;
-		$response->author = $this->pluginData["AuthorName"];
-		$response->homepage = $this->pluginData["PluginURI"];
+		$response->name  		= $this->pluginData["Name"];
+		$response->version 		= $this->githubAPIResult->tag_name;
+		$response->author 		= $this->pluginData["AuthorName"];
+		$response->homepage 	= $this->pluginData["PluginURI"];
 		 
 		// This is our release download zip file
 		$downloadLink = $this->githubAPIResult->zipball_url;
@@ -128,8 +131,9 @@ class SorbiPluginUpdater {
 		
 		// Create tabs in the lightbox
 		$response->sections = array(
-			'description' => $this->pluginData["Description"],
-			'changelog' => $this->githubAPIResult->body
+			'description' 	=> $this->pluginData["Description"],
+			'changelog' 	=> $this->githubAPIResult->body,
+			'installation'	=> __('<p>Install the <b>SORBI Connect</b> plugin and register your website at <a href="http://www.sorbi.com">www.sorbi.com</a></p><p>After you register your website, add your site key on the SORBI Connect options page.</p><p>Finally, go back to <a href="http://www.sorbi.com">www.sorbi.com</a> and verify your website.</p>', SORBI_TD)
 		);
 		
 		// Gets the required version of WP if available
