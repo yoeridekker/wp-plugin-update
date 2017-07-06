@@ -6,7 +6,7 @@ Description: Connect your website to the SORBI network
 Author: Yoeri Dekker
 Author URI: http://www.csorbamedia.com/
 Text Domain: sorbi-connect
-Version: 1.0.7
+Version: 1.0.8
 */
 
 // define global variables
@@ -26,3 +26,7 @@ if( is_admin() ){
 
 // init the SorbiConnect class
 $sorbi = new SorbiConnect();
+
+// deactivation and activation hook
+register_deactivation_hook( SORBI_PLUGIN_FILE, array( $sorbi, 'deactivation' ) );
+register_activation_hook( SORBI_PLUGIN_FILE, array( $sorbi,'activation' ) );

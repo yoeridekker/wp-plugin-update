@@ -28,6 +28,7 @@ class SorbiConnect{
 	protected $is_admin	 						= false;
 	
 	// options names
+	protected $sorbi_last_file_chec_option_name	= 'sorbi_last_file_check_time';
 	protected $sorbi_debug_option_name			= 'sorbi_debug_option';
 	protected $sorbi_files_option_name			= 'sorbi_filechanges';
 	protected $sorbi_message_option_name		= 'sorbi_messages';
@@ -35,6 +36,7 @@ class SorbiConnect{
 	protected $sorbi_options_group				= 'sorbi_options';
 	protected $sorbi_options_section			= 'sorbi_option_section';
 	protected $sorbi_debug_options_section		= 'sorbi_debug_option_section';
+	protected $site_secret_option_name 			= 'sorbi_site_secret';
 	protected $site_key_option_name 			= 'sorbi_site_key';
 	protected $site_key_expiration_option_name 	= 'sorbi_site_key_expiration';
 	
@@ -83,6 +85,9 @@ class SorbiConnect{
 		
 		// get the site key 
 		$this->site_key = get_option( $this->site_key_option_name, false );
+		
+		// get the site secret
+		$this->site_secret = get_option( $this->site_secret_option_name, false );
 		
 		// add the wp admin init listener 
 		add_action( 'init', array( $this, 'init' ) );
@@ -145,7 +150,45 @@ class SorbiConnect{
 		
 		// get current screen 
 		add_action( 'current_screen', array( $this, 'get_current_screen' ) );
+
+		// register the unistall hook, static
+		register_uninstall_hook( SORBI_PLUGIN_FILE, 'self::uninstall' );
+	}
+	
+	// uninstall function
+	static function uninstall(){
+		update_option('sorbi_unistall', time() );
+	}
+	
+	public function activation(){
 		
+		// flush the rewrite rules
+		flush_rewrite_rules();
+	}
+	
+	public function deactivation(){
+		// flush the rewrite rules
+		flush_rewrite_rules();
+		/*
+		// loop the /sorbi file in the upload dir and remove all
+		if ( is_dir("{$this->uploaddir['basedir']}/{$this->folder}") ) {
+			array_map('unlink', glob("{$this->uploaddir['basedir']}/{$this->folder}/*.*"));
+			rmdir("{$this->uploaddir['basedir']}/{$this->folder}");
+		}
+		
+		// remove all the options
+		delete_option( $this->sorbi_last_file_chec_option_name );
+		delete_option( $this->sorbi_debug_option_name );
+		delete_option( $this->sorbi_files_option_name );
+		delete_option( $this->sorbi_message_option_name );
+		delete_option( $this->sorbi_notices_option_name );
+		delete_option( $this->sorbi_options_group );
+		delete_option( $this->sorbi_options_section );
+		delete_option( $this->sorbi_debug_options_section );
+		delete_option( $this->site_secret_option_name );
+		delete_option( $this->site_key_option_name );
+		delete_option( $this->site_key_expiration_option_name );
+		*/
 	}
 	
 	// get the systme info 
@@ -314,7 +357,8 @@ class SorbiConnect{
 			$this->check_site_key = isset($_REQUEST['site_key']) && !empty($_REQUEST['site_key']) ? $_REQUEST['site_key'] : false ; 
 			
 			if( get_query_var( $this->sync_rewrite_var ) === $this->check_site_key ){
-				
+
+				/*
 				// create the mysql backup
 				$sql_backup 	= $this->mysql_backup();
 				
@@ -338,10 +382,10 @@ class SorbiConnect{
 					}
 					$zip->close();
 				}
-		
-				// push the versions
-				$versions 		= $this->after_update();
-
+				*/
+				// push the versions, set the manul param to false
+				$versions = $this->after_update( false );
+				/*
 				// return result
 				$result = array(
 					//'files'		=> $this->files,
@@ -349,6 +393,9 @@ class SorbiConnect{
 					'versions' 	=> $versions,
 					'backup'	=> $sql_backup,
 					'filebackup'=> $backupfiles
+				);*/
+				$result = array(
+					'versions' => $versions
 				);
 				
 				// output the data
@@ -501,8 +548,7 @@ class SorbiConnect{
 		
 		$now			= time();
 		$changes		= array();
-		$option_name	= 'sorbi_last_file_check_time';
-		$check_time 	= get_option( $option_name, $now );
+		$check_time 	= get_option( $this->sorbi_last_file_chec_option_name, $now );
 		
 		foreach( $this->files as $folder => $files ){
 			foreach( $files as $file => $filetimes ){
@@ -551,13 +597,13 @@ class SorbiConnect{
 	 *
 	 * @return void
 	 **/
-	public function after_update(){
+	public function after_update( $manual = true ){
 		
 		// debug
 		$this->debug();
 		
 		// try to get all the versions
-		$versions = $this->list_versions();
+		$versions = $this->list_versions( $manual );
 		
 		// if we have versions, push it to SORBI
 		if( $versions ){
@@ -731,6 +777,45 @@ class SorbiConnect{
 	}
 	
 	/**
+	 * The validate site secret function will post the submitted site secret to the SORBI API
+	 * 
+	 * @param string $site_secret the hashed site key from the SORBI Dashboard
+	 * @return void
+	 **/
+	public function validate_site_secret( $site_secret ){
+		
+		// debug
+		$this->debug();
+		
+		// only execute on wp-admin
+		if( !$this->is_admin ) return;
+		
+		// check the submitted site secret 
+		$status = $this->sorbi_api_call( 
+			'validate/secret',
+			array( 
+				'site_key' 	=> $this->site_key,
+				'secret' 	=> $site_secret,
+			)
+		);
+		
+		// create a notice for the success message
+		if( (bool) $status->status === true ){
+			
+			// set the notice
+			$this->notices['success'][] = __('Your SORBI site secret is valid.', SORBI_TD );
+			
+			// save the notice 
+			update_option( $this->sorbi_notices_option_name, (array) $this->notices );
+		}
+
+		// save the messages 
+		update_option( $this->sorbi_message_option_name, (array) $this->messages );
+		
+		return $site_secret;
+	}
+	
+	/**
 	 * On admin init we check the site key and expiration
 	 * After we set the setting fields
 	 * 
@@ -756,13 +841,6 @@ class SorbiConnect{
 			}
 		}
 		
-		// site key settings field
-		register_setting(
-            $this->sorbi_options_group, // Option group
-            $this->site_key_option_name, // Option name
-			array( $this, 'validate_site_key')
-        );
-		
 		add_settings_section(
             $this->sorbi_options_section, // ID
             __("Connect your SORBI site key", SORBI_TD ), // Title
@@ -770,6 +848,7 @@ class SorbiConnect{
             $this->pagename // Page
         );  
 		
+		// add settings field for the site key 
 		add_settings_field(
             $this->site_key_option_name, // ID
             'SORBI Site key', // Title 
@@ -780,12 +859,38 @@ class SorbiConnect{
 				'name' => $this->site_key_option_name
 			)
         );
-			
+		
+		// add settings field for the site secret 
+		add_settings_field(
+            $this->site_secret_option_name, // ID
+            'SORBI Site secret', // Title 
+            array( $this, 'site_secret_callback' ), // Callback
+            $this->pagename, // Page     
+			$this->sorbi_options_section,
+			array(
+				'name' => $this->site_secret_option_name
+			)
+        );
+		
+		// site key settings field
+		register_setting(
+            $this->sorbi_options_group, // Option group
+            $this->site_key_option_name, // Option name
+			array( $this, 'validate_site_key')
+        );
+		
+		// site secret settings field
+		register_setting(
+            $this->sorbi_options_group, // Option group
+            $this->site_secret_option_name, // Option name
+			array( $this, 'validate_site_secret')
+        );
+		
 	}
 	
 	/** 
      * Update the debug mode, 1 = On | 0 = Off
-* Triggered by setting a GET or POST variable "sorbi_debug" true|false
+	 * Triggered by setting a GET or POST variable "sorbi_debug" true|false
 	 *
 	 * @return void
      */
@@ -825,6 +930,24 @@ class SorbiConnect{
 		
         printf('<input type="text" id="%s" name="%s" value="%s" />', $args['name'], $args['name'], ( $this->site_key ? esc_attr( $this->site_key ) : '' )  );
     }
+	
+	/** 
+     * Get the site secret and print its value in the input
+	 * If the site_key is not set, the site secret will be hidden
+	 *
+	 * @return void
+     */
+	public function site_secret_callback( $args ){
+		// debug
+		$this->debug();
+		
+		// update or set the site secret
+        if( $this->site_key ){
+			printf('<input type="text" id="%s" name="%s" value="%s" />', $args['name'], $args['name'], ( $this->site_secret ? esc_attr( $this->site_secret ) : '' )  );
+		}else{
+			_e('Please activate your site key.', SORBI_TD );
+		}
+	}
 
 	/**
 	 * Create the settings page menu item for SORBI Connect
@@ -844,9 +967,47 @@ class SorbiConnect{
 			'manage_options',
 			$this->pagename,
 			array( $this, 'sorbi_settings_page' ), 
-			'data:image/svg+xml;base64,PHN2ZyBpZD0iTGF5ZXJfMSIgZGF0YS1uYW1lPSJMYXllciAxIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMTUuMTMgMTA1Ljg3Ij48dGl0bGU+c29yYmkgaWNvbjwvdGl0bGU+PGNpcmNsZSBjeD0iOTEuMTIiIGN5PSI2Ny4yNCIgcj0iMTQuNTkiLz48cGF0aCBkPSJNMTEzLjUyLDc1YTMuODYsMy44NiwwLDAsMSwzLjU2LTMuODRjLTIuNTUtMTYuMzYtMjAuOTQtMjkuNjEtNDUuMjEtMzNsLS4xOS0uMjhjLS43OS0yLjUtNC4yMS00LjUxLTguNjgtNS4yVjIzLjRhOC43NSw4Ljc1LDAsMSwwLTcsLjIydjkuMTdjLTQuMzkuNzMtNy43LDIuNzYtOC40Miw1LjI1bC0uMTMuMTlDMjMuNTYsNDEuNTEsNS4xOSw1NC4zOSwyLjE4LDcwLjM5QTMuODksMy44OSwwLDAsMSw0LjY5LDc0YTMuODQsMy44NCwwLDAsMS0yLjc0LDMuN0M0LDk3LjIxLDI5LjA1LDExMi42Miw1OS41OSwxMTIuNjJjMjkuOTIsMCw1NC41My0xNC44LDU3LjQ5LTMzLjc3QTMuODUsMy44NSwwLDAsMSwxMTMuNTIsNzVaTTkxLjc4LDEwMEgyNi40NmMtMTAuOTQsMC0xOS44LTEwLjYyLTE5LjgtMjQuNDVzOS4wOC0yNC43NSwyMC0yNC43NWMxLjQxLDAsMi4zMy40OCw0LjMzLjgzaDBMNDIuNTcsNTVhNzMuODYsNzMuODYsMCwwLDAsMzYuMjEtLjI2QTIwLDIwLDAsMCwwLDgwLjk1LDU0YzIuMjctLjg4LDYuODYtMi45MiwxMC4xMy0yLjkyLDEwLjk0LDAsMjAuMTYsMTAuNjIsMjAuMTYsMjQuNDVTMTAyLjcyLDEwMCw5MS43OCwxMDBaIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMS45NCAtNi43NSkiLz48Y2lyY2xlIGN4PSIyMi43MSIgY3k9IjY3LjI0IiByPSIxNC41OSIvPjwvc3ZnPg=='
+			'data:image/svg+xml;base64,' . base64_encode('<svg id="sorbi_icon" data-name="Sorbi Icon" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 115.13 105.87"><title>sorbi icon</title><circle stroke="none" fill="#a0a5aa" cx="91.12" cy="67.24" r="14.59"/><path stroke="none" fill="#a0a5aa" d="M113.52,75a3.86,3.86,0,0,1,3.56-3.84c-2.55-16.36-20.94-29.61-45.21-33l-.19-.28c-.79-2.5-4.21-4.51-8.68-5.2V23.4a8.75,8.75,0,1,0-7,.22v9.17c-4.39.73-7.7,2.76-8.42,5.25l-.13.19C23.56,41.51,5.19,54.39,2.18,70.39A3.89,3.89,0,0,1,4.69,74a3.84,3.84,0,0,1-2.74,3.7C4,97.21,29.05,112.62,59.59,112.62c29.92,0,54.53-14.8,57.49-33.77A3.85,3.85,0,0,1,113.52,75ZM91.78,100H26.46c-10.94,0-19.8-10.62-19.8-24.45s9.08-24.75,20-24.75c1.41,0,2.33.48,4.33.83h0L42.57,55a73.86,73.86,0,0,0,36.21-.26A20,20,0,0,0,80.95,54c2.27-.88,6.86-2.92,10.13-2.92,10.94,0,20.16,10.62,20.16,24.45S102.72,100,91.78,100Z" transform="translate(-1.94 -6.75)"/><circle stroke="none" fill="#a0a5aa" cx="22.71" cy="67.24" r="14.59"/></svg>')
 		);
 		
+	}
+	
+	/**
+	 * Create the settings page menu item for SORBI Connect
+	 * This function will create a top-level settings page menu item in the WP Backend
+	 * 
+	 * @param string $plugin_path the relative path to the plugin
+	 * @return bool if false, on success will return a version
+	 */
+	private function version_check( $plugin_path ){
+		
+		// try to create the plugin slug
+		$slug = explode('/', $plugin_path);
+		
+		// check for update 
+		$args = array(
+			'timeout'	=> 5,
+			'method'	=> 'POST',
+		); 
+
+		// call the WordPress API
+		$response = wp_safe_remote_post("https://api.wordpress.org/plugins/info/1.0/{$slug[0]}.json", $args );
+		
+		// check the response
+		if( is_array( $response ) && isset( $response['body'] ) ){
+			
+			// check fr valid json
+			$json = json_decode( $response['body'], true );
+			
+			// check if we can find the version
+			if( $json && isset( $json['version'] ) ){
+				return $json['version'];
+			}
+			
+			return false;
+		}
+		
+		return false;
 	}
 	
 	/**
@@ -854,12 +1015,15 @@ class SorbiConnect{
 	 * 
 	 * @return array $versions
 	 */
-	public function list_versions(){
+	public function list_versions( $manual = true ){
 		// debug
 		$this->debug();
 		
 		// set the args array
 		$args = array();
+		
+		// set the versions array
+		$versions = array();
 		
 		// Check if get_plugins() function exists. This is required on the front end of the
 		// site, since it is in a file that is normally only loaded in the admin.
@@ -867,15 +1031,26 @@ class SorbiConnect{
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
 		}
 		
+		// try to do checksum comparison
+		include( ABSPATH . 'wp-includes/version.php' );
+		
 		// for the plugins
 		$plugins = get_plugins();
 		if( $plugins ){
 			foreach( $plugins as $path => $plugin ){
+				
+				// set the defaut response
 				$versions['plugin'][ $path ] = array(
 					'name'		=> $plugin['Name'],
-					'active' 	=> is_plugin_active( $path ),
+					'active' 	=> ( is_plugin_active( $path ) ? 1 : 0 ),
 					'version' 	=> $plugin['Version']
 				);
+				
+				// if we call the script, we need to check for updates 
+				if( !$manual ){
+					$latest = $this->version_check( $path );
+					$versions['plugin'][ $path ]['extra'] = ( $latest && version_compare( $latest, $plugin['Version'] , ">" ) ? "Update available ({$latest})" : false );
+				}
 			}
 		}
 		
@@ -893,23 +1068,65 @@ class SorbiConnect{
 		foreach( $themes as $key => $theme ){
 			$versions['theme'][ $key ] = array(
 				'name'		=> $theme['Name'],
-				'active' 	=> ( $current->get( 'Name' ) === $theme['Name'] ),
+				'active' 	=> ( $current->get( 'Name' ) === $theme['Name'] ? 1 : 0 ),
 				'version' 	=> $theme['Version'],
 			);
+		}
+		
+		// get checksums 
+		if( !$manual ){
+			$valid 		= true;
+			$checksums	= array();
+			$extra 		= '';
+			$wp_locale 	= isset( $wp_local_package ) ? $wp_local_package : 'en_US' ;
+			$api_url 	= sprintf( 'https://api.wordpress.org/core/checksums/1.0/?version=%s&locale=%s', $wp_version, $wp_locale );
+			$api_call 	= wp_remote_get( $api_url );
+			
+			if( is_array($api_call) ){
+				$json 		= json_decode ( $api_call['body'] );
+
+				foreach( $json->checksums as $file => $checksum ) {
+					$file_path = ABSPATH . $file;
+					
+					if ( !file_exists( $file_path ) ){
+						$valid = false;
+						$checksums['Missing files'][] = $file;
+						continue;
+					}
+					
+					if( md5_file ($file_path) !== $checksum ) {
+						$valid = false;
+						$checksums['Invalid files'][] = $file;
+						continue;
+					}
+
+				}
+			}
+			
+			// add the core checksum result 
+			$versions['security']['core_integrity'] = array(
+				'name'		=> 'WordPress Core Integrity',
+				'active' 	=> ( $valid ? 1 : 0 ),
+				'version' 	=> "{$wp_version} ({$wp_locale})",
+				'extra' 	=> ( $valid ? '' : json_encode( $checksums ) )
+			);
+			
 		}
 		
 		// return result
 		return $versions;
 	}
 	
+	
 	private function update_versions( $versions ){
 		// debug
 		$this->debug();
 		
 		// set args
-		$args['site_key'] 	= $this->site_key;
-		$args['platform'] 	= $this->platform;
-		$args['versions'] 	= (array) $versions;
+		$args['site_key'] 		= $this->site_key;
+		$args['platform'] 		= $this->platform;
+		$args['versions'] 		= (array) $versions;
+		$args['site_secret'] 	= $this->site_secret;
 		
 		// call the SORBI API
 		$version_call = $this->sorbi_api_call( 'versions', $args, 'POST', true );
@@ -943,23 +1160,23 @@ class SorbiConnect{
         </div>
 		<?php
 	}
-	
-	 /**
+
+	/**
      * Call the SORBI API
      *
      * @param array $input Contains all settings fields as array keys
      */
 	public function sorbi_api_call( $action = '' , $args = array(), $method = 'POST', $silent = false ){
+		
 		// debug
 		$this->debug();
-		
+
 		// construct the call
 		$call = array(
 			'method' 		=> $method,
 			'timeout'   	=> $this->timeout,
 			'httpversion' 	=> '1.0',
 			'blocking'    	=> true,
-			'headers'     	=> array(),
 			'body' 			=> $args
 		);
 		
@@ -967,7 +1184,7 @@ class SorbiConnect{
 		$url = sprintf( $this->api_uri, $this->version, $action );
 		
 		// execute request
-		$response = wp_remote_post( $url, $call );
+		$response = wp_safe_remote_post( $url, $call );
 		
 		// wp error check
 		if( is_wp_error( $response ) ){
@@ -1007,6 +1224,11 @@ class SorbiConnect{
 		}
 	}
 	
+	/**
+     * Goodbye function will generate the debug output if enabled
+     *
+     * @return string HTML output with debug info
+     */
 	private function googbye(){
 		// debug
 		$this->debug();
@@ -1043,6 +1265,12 @@ class SorbiConnect{
 		printf( '<div id="sorbi_debug"><h2>SORBI Debug</h2>%s</div>', $highlighted );
 	}
 	
+	/**
+     * Class destructor
+     * Execute the goodbye function if on the plugin backend
+	 *
+     * @return void
+     */
 	public function __destruct() {
 		if( $this->is_admin && $this->screen->parent_file === $this->pagename && $this->debug ) $this->googbye();
 	}
